@@ -2,7 +2,9 @@
 title: "README"
 author: "Jacob Hutton"
 date: "9/7/2022"
-output: github_document 
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -220,7 +222,7 @@ update_spatial_plot()
 print("Simulation Complete")
 
 
-```
+
 
 
 Let's run the simulation
