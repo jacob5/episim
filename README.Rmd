@@ -1,0 +1,239 @@
+---
+title: "README"
+author: "Jacob Hutton"
+date: "9/7/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+Infectious diseases have different traits, whcih must be considered during modelling. 
+
+Some diseases are vector borne, others are transmitted through aerosols, blood, etc. 
+
+When writing models of pathogen spread in a population, we need to first ascertain the stage of the disease spread. Epidemics refer to periods of transmission of a fairly new disease, where everyone is susceptible. On the other hand, endemic situations refer to a more open ended model, which assumes that the disease has already been circulating in the population and is unlikely to become extinct. 
+
+We must also consider the population at risk. Is it a fixed (closed) or dynamic (open) population of individuals? Dynamic populations must take into account individuals becoming at risk and ceasing to be at risk, perhaps through migration, death, age, etc. 
+
+Let's think about an early phase model for an epidemic. In this situation, 1 individual with the new disease has arrived into a population of at risk individuals. For this new strain, we would like to instantiate a model that answers: 
+
+|     1. What is the likelihood of a large epidemic? 
+
+|     2. How fast does the epidemic run? 
+
+|     3. What fraction of the population will be infected with this new strain?
+
+From a policy standpoint, the answers to the above questions may also inform control measures. What sort of control strategies may be most effective given the nature of the new viral dynamics? We can seek to answer this with a model as well. 
+
+Let's define *contact rate c* as a rate of contact between an infected individual and susceptible individuals per day. 
+
+We also define an infectious period as the period following the end of the incubation period (*t1*), and prior to the onset of recovery (*t2*). During this time an infected individual can pass the disease to other individuals. 
+
+The likelihood of this passage from the infected individual to the susceptible individual is defined by the *probability p* of transmission per contact. *p* is a value bounded by 0 and 1. 
+
+Focusing on the early phase of our new epidemic, in this phase all contacts will be with susceptible individuals. In this case, the total average number of new infections from 1 infected person at the beginning of the epidemic will be equal to the contact rate *c* times the probability of transmission *p* times the length of time that an individual is infectious. 
+
+We can express the above in equation form as: 
+
+c x p(t2-t1)
+
+This is known as the base reproductive number: R0. As the epidemic evolves, this value will change depending on the number of susceptible individuals, changes in behaviour, and possible pathogen evolution. 
+
+This R0 is an average obtained from observationl studies on the dynamics of pathogen transmission. We can disintegreate this average by defining qk as the probability that an infectious person produces k infectious offspring. For example, q1 would be the probability that 1 individual is infected, and q2 would be the probability that 2 are infected. For a density space of 1->n values of k, we can plot the probabiltiy distribution of q. 
+
+```{r}
+x <- sample( 1:4, 10000, replace=TRUE, prob=c(0.1, 0.2, 0.65, 0.05) )
+require(tidyverse)
+x%>%as.data.frame()%>% ggplot2::ggplot()+geom_density(aes(x))
+```
+
+It appears that the distribution is multimodal, but the bulk of observations aggregate around 3, suggesting that the R0 of the new strain is 3. 
+
+```{r}
+x1<-data.frame("c"=seq(0,10, by=1), "p"=.15, "t1"=0, "t2"=4)
+x1 <- x1 %>% mutate(r_0=c*p*(t2-t1))
+for(i in 1:length(x1)){
+  x1%>%ggplot2::ggplot()+geom_line(aes(c[i,], r_0[i,]))
+}
+```
+
+
+Let's instantiate a population, with a random allocation of infected individuals. As this is a new epidemic, we will assume that all non-infected individuals are at-risk, and that this is a closed population. 
+
+```{r}
+population.setup<-function(size, initial.infected){
+  set.seed(2)
+
+initial.population = data.frame(
+  x = runif(size),
+  y = runif(size)
+)
+# randomly allocate infected individuals
+initial.population$inf <- rbinom(n=nrow(initial.population), size=1, prob=initial.infected)
+initial.population <- initial.population %>% mutate(ID=1:n())
+initial.population <- sf::st_as_sf(initial.population, coords=c("x","y"))
+return(initial.population)
+}
+initial.population <- population.setup(size=1000, initial.infected=.02)
+```
+
+Now let's model a spatially transmitted infection
+
+```{r}
+# infected <- initial.population %>% filter(inf==1) %>% sf::st_set_crs(4326)
+# susceptible <- initial.population %>% filter(inf==0) %>% sf::st_set_crs(4326)
+
+table(initial.population$inf)
+```
+
+At baseline, only 15 out of 1000 individuals have the pathogen
+
+```{r}
+update_spatial_plot<-function(){
+  initial.population<-initial.population%>%as.data.frame()
+  # initial.population$y <-  stringr::str_split_fixed(initial.population$geometry, " ", 2)[,2]
+  # initial.population$y <- gsub("\\)", "", initial.population$y )
+  # initial.population$y <- as.numeric(initial.population$y)
+  # 
+  # initial.population$x <-  stringr::str_split_fixed(initial.population$geometry, " ", 2)[,1]
+  # initial.population$x <- gsub("c", "", initial.population$x )
+  # initial.population$x <- gsub("\\(", "", initial.population$x )
+  # initial.population$x <- gsub(",", "", initial.population$x )
+  # initial.population$x <- as.numeric(initial.population$x)
+  # 
+  # for(i in 1:length(initial.population)){
+  #     initial.population["x",1] <- initial.population["x",1] + runif(1, -5, +5)
+  #     initial.population["y",1] <- initial.population["y",1] + runif(1, -5, +5) 
+  # }
+  # initial.population <- initial.population %>% filter(!is.na(x))
+  # initial.population <- initial.population %>% sf::st_as_sf(coords=c("x","y"))
+
+  
+  infected <- initial.population %>% filter(inf==1)
+  susceptible <- initial.population %>% filter(inf!=1)
+
+  plot(infected$geometry, col="red", pch="*")
+  plot(susceptible$geometry, add=T, pch="*")
+}
+update_spatial_plot()
+```
+
+This is the population at the beginning of the simulation. 
+
+
+Now we can compute the distances to infected individuals for all susceptible individuals. 
+
+```{r}
+compute_distances<-function(){
+  infected <- initial.population %>% filter(inf==1) %>% sf::st_set_crs(4326)
+  susceptible <- initial.population %>% filter(inf==0) %>% sf::st_set_crs(4326)
+  dists <- NULL
+  for(i in 1:nrow(susceptible)){
+    # for each susceptible, compute the distance to all infected and return a data frame
+    dists[[i]] <-raster::pointDistance(susceptible[i,], infected, lonlat=F, allpairs=T)
+
+  }
+  return(dists)
+}
+distances <- compute_distances()
+```
+
+Now we have a matrix of distances, with the distance to the infected individuals for each of the susceptible individuals. We can simulate transmission to susceptible individuals based on the disperson of the virus, parameterized by the *transmission radius*.
+
+
+```{r}
+simulate_spatial_transmission<-function(transmission.radius){
+  result <- NULL
+  i <- NULL
+for(i in 1:length(distances)){
+    result_new <- as.data.frame(distances[i])
+    colnames(result_new)[1] <- "Distance.to.Infected"
+    # min(result)
+    result_new$ID <- i
+    # result_new$report_loc <- paste0(reports.loc[i,1], " ", reports.loc[i,2])
+    # result_new$source_loc <- paste0(sources.loc[i,1], " ", sources.loc[i,2])
+    result<-rbind(result, result_new)
+}
+  result <- result %>% group_by(ID) %>% slice_min(Distance.to.Infected)
+  result <- result %>% mutate(proximal = ifelse(Distance.to.Infected<as.numeric(transmission.radius), 1, 0)) %>% select(ID, proximal)
+  return(result)
+}
+result <- simulate_spatial_transmission(transmission.radius=0.02)
+table(result$proximal)
+```
+
+
+We'll modify the initial population with the new infected statuses to represent dynamic spread based on proximity. 
+
+```{r}
+table(initial.population$inf)
+update_infected_status <- function(initial.population){
+  initial.population <- left_join(initial.population, result, by="ID")
+  initial.population$inf <- ifelse(initial.population$proximal==1, 1, initial.population$inf)
+  initial.population <- initial.population%>%select(ID, inf)
+  return(initial.population)
+}
+initial.population<-update_infected_status(initial.population)
+```
+
+Plot the updated population 
+
+```{r}
+update_spatial_plot()
+```
+
+Finally, we can apply a random movement function to the points to simulate spatial movement
+
+```{r}
+# simulate_movement<-function(){
+#   initial.population <- initial.population %>% mutate(geometry = geometry + runif(1, -5, +5))
+# }
+# initial.population <- simulate_movement()
+```
+
+So the whole simulation is composed of repeating the following functions: 
+
+```{r}
+initial.population <- population.setup(size=1000, initial.infected=.02)
+distances <- compute_distances()
+table(initial.population$inf)
+result <- simulate_spatial_transmission(transmission.radius=.02)
+initial.population<-update_infected_status(initial.population)
+table(initial.population$inf)
+update_spatial_plot()
+distances <- compute_distances()
+table(initial.population$inf)
+result <- simulate_spatial_transmission(transmission.radius=.02)
+table(initial.population$inf)
+initial.population<-update_infected_status(initial.population)
+table(initial.population$inf)
+update_spatial_plot()
+distances <- compute_distances()
+table(initial.population$inf)
+result <- simulate_spatial_transmission(transmission.radius=.02)
+table(initial.population$inf)
+initial.population<-update_infected_status(initial.population)
+table(initial.population$inf)
+update_spatial_plot()
+print("Simulation Complete")
+
+
+```
+
+
+Let's run the simulation
+```{r}
+# initial.population <- population.setup(size=1000, initial.infected=.02)
+# table(initial.population$inf)
+# run_simulation()
+# table(initial.population$inf)
+# run_simulation()
+# table(initial.population$inf)
+# initial.population <- run_simulation()
+# table(initial.population$inf)
+```
+
