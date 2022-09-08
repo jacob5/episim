@@ -11,7 +11,7 @@ output:
 knitr::opts_chunk$set(echo = F)
 ```
 
-Infectious diseases have different traits, whcih must be considered during modelling. 
+Infectious diseases have different traits, which must be considered during modelling. 
 
 Some diseases are vector borne, others are transmitted through aerosols, blood, etc. 
 
